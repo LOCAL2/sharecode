@@ -960,16 +960,24 @@ function App() {
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
           <div className={`${
             theme === 'dark' ? 'bg-[#161b22]' : 'bg-white'
-          } rounded-3xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-300`}>
-            <div className="p-8">
-              <div className="flex items-center justify-between mb-8">
-                <div>
-                  <h2 className={`text-3xl font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-                    Share Your Code
-                  </h2>
-                  <p className={`text-sm mt-1 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
-                    Post your code snippet to the community
-                  </p>
+          } rounded-3xl shadow-2xl max-w-5xl w-full max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-300`}>
+            {/* Header */}
+            <div className={`px-8 py-6 border-b ${theme === 'dark' ? 'border-[#30363d]' : 'border-gray-200'}`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-4">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-lg">
+                    <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h2 className={`text-2xl font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+                      Share Your Code
+                    </h2>
+                    <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+                      Post your code snippet to the community
+                    </p>
+                  </div>
                 </div>
                 <button
                   onClick={() => setShowCreateModal(false)}
@@ -982,32 +990,45 @@ function App() {
                   </svg>
                 </button>
               </div>
+            </div>
 
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto px-8 py-6">
               <div className="space-y-6">
+                {/* Title Input */}
                 <div>
-                  <label className={`block text-sm font-semibold mb-3 ${theme === 'dark' ? 'text-gray-200' : 'text-gray-800'}`}>
-                    Title <span className={`text-sm font-normal ${theme === 'dark' ? 'text-gray-500' : 'text-gray-500'}`}>(optional)</span>
+                  <label className={`flex items-center space-x-2 text-sm font-semibold mb-3 ${theme === 'dark' ? 'text-gray-200' : 'text-gray-800'}`}>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                    </svg>
+                    <span>Title</span>
+                    <span className={`text-xs font-normal ${theme === 'dark' ? 'text-gray-500' : 'text-gray-500'}`}>(optional)</span>
                   </label>
                   <input
                     type="text"
                     value={newPost.title}
                     onChange={(e) => setNewPost({ ...newPost, title: e.target.value })}
-                    placeholder="Untitled"
+                    placeholder="Give your code a descriptive title..."
                     className={`w-full px-5 py-3.5 rounded-xl border-2 ${
                       theme === 'dark'
                         ? 'bg-[#0d1117] border-[#30363d] text-white placeholder-gray-500 focus:border-blue-500'
                         : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-blue-500'
-                    } focus:ring-4 focus:ring-blue-500/20 transition-all outline-none`}
+                    } focus:ring-4 focus:ring-blue-500/20 transition-all outline-none text-lg`}
                   />
                 </div>
 
+                {/* Code Editor */}
                 <div>
-                  <label className={`block text-sm font-semibold mb-3 ${theme === 'dark' ? 'text-gray-200' : 'text-gray-800'}`}>
-                    Code <span className="text-red-500">*</span>
+                  <label className={`flex items-center space-x-2 text-sm font-semibold mb-3 ${theme === 'dark' ? 'text-gray-200' : 'text-gray-800'}`}>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                    </svg>
+                    <span>Code</span>
+                    <span className="text-red-500">*</span>
                   </label>
                   <div className={`border-2 rounded-xl overflow-hidden ${
                     theme === 'dark' ? 'border-[#30363d]' : 'border-gray-200'
-                  }`} style={{ height: '450px' }}>
+                  } shadow-inner`} style={{ height: '450px' }}>
                     <Editor
                       height="100%"
                       defaultLanguage="javascript"
@@ -1016,8 +1037,11 @@ function App() {
                       theme={theme === 'dark' ? 'vs-dark' : 'light'}
                       loading={
                         <div className="flex items-center justify-center h-full">
-                          <div className={`text-lg ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-                            Loading editor...
+                          <div className="flex flex-col items-center space-y-3">
+                            <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
+                            <div className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+                              Loading editor...
+                            </div>
                           </div>
                         </div>
                       }
@@ -1033,16 +1057,59 @@ function App() {
                         formatOnType: true,
                         padding: { top: 20, bottom: 20 },
                         smoothScrolling: true,
+                        cursorBlinking: 'smooth',
+                        cursorSmoothCaretAnimation: 'on',
                       }}
                     />
                   </div>
+                  {!newPost.code.trim() && (
+                    <p className={`mt-2 text-xs flex items-center space-x-1 ${theme === 'dark' ? 'text-gray-500' : 'text-gray-600'}`}>
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span>Start typing or paste your code here</span>
+                    </p>
+                  )}
                 </div>
+              </div>
+            </div>
 
-                <div className="flex space-x-4 pt-6">
+            {/* Footer */}
+            <div className={`px-8 py-6 border-t ${theme === 'dark' ? 'border-[#30363d] bg-[#0d1117]' : 'border-gray-200 bg-gray-50'}`}>
+              <div className="flex items-center justify-between">
+                <div className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+                  {newPost.code.trim() ? (
+                    <span className="flex items-center space-x-2">
+                      <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span>{newPost.code.split('\n').length} lines • {newPost.code.length} characters</span>
+                    </span>
+                  ) : (
+                    <span className="flex items-center space-x-2">
+                      <svg className="w-4 h-4 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <span>Code is required</span>
+                    </span>
+                  )}
+                </div>
+                <div className="flex space-x-3">
+                  <button
+                    onClick={() => setShowCreateModal(false)}
+                    disabled={uploading}
+                    className={`px-6 py-3 rounded-xl transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed ${
+                      theme === 'dark'
+                        ? 'bg-[#21262d] hover:bg-[#30363d] text-white'
+                        : 'bg-white hover:bg-gray-100 text-gray-900 border-2 border-gray-200'
+                    }`}
+                  >
+                    Cancel
+                  </button>
                   <button
                     onClick={createPost}
                     disabled={!newPost.code.trim() || uploading}
-                    className="flex-1 px-6 py-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed text-white rounded-xl transition-all font-bold text-lg shadow-xl hover:shadow-2xl hover:scale-[1.02] disabled:hover:scale-100 flex items-center justify-center space-x-2"
+                    className="px-8 py-3 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed text-white rounded-xl transition-all font-bold shadow-xl hover:shadow-2xl hover:scale-[1.02] disabled:hover:scale-100 flex items-center justify-center space-x-2 min-w-[140px]"
                   >
                     {uploading ? (
                       <>
@@ -1053,19 +1120,13 @@ function App() {
                         <span>Publishing...</span>
                       </>
                     ) : (
-                      <span>Publish Post</span>
+                      <>
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span>Publish Post</span>
+                      </>
                     )}
-                  </button>
-                  <button
-                    onClick={() => setShowCreateModal(false)}
-                    disabled={uploading}
-                    className={`px-8 py-4 rounded-xl transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed ${
-                      theme === 'dark'
-                        ? 'bg-[#21262d] hover:bg-[#30363d] text-white'
-                        : 'bg-gray-100 hover:bg-gray-200 text-gray-900'
-                    }`}
-                  >
-                    Cancel
                   </button>
                 </div>
               </div>
