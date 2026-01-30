@@ -63,7 +63,10 @@ function DeleteModal({ show, onConfirm, onCancel, theme }: DeleteModalProps) {
 
 function App() {
   const [posts, setPosts] = useState<CodePost[]>([])
-  const [theme, setTheme] = useState<'light' | 'dark'>('dark')
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const savedTheme = localStorage.getItem('theme')
+    return (savedTheme as 'light' | 'dark') || 'dark'
+  })
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [showPinModal, setShowPinModal] = useState(false)
@@ -106,6 +109,11 @@ function App() {
       setShowOnboarding(true)
     }
   }, [])
+
+  useEffect(() => {
+    // Save theme to localStorage whenever it changes
+    localStorage.setItem('theme', theme)
+  }, [theme])
 
   useEffect(() => {
     if (userProfile) {
