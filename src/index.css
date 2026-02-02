@@ -2,4 +2,57 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Custom Scrollbar Styles */
+/* Dark Theme Scrollbar */
+.dark-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.dark-scrollbar::-webkit-scrollbar-track {
+  background: #0d1117;
+  border-radius: 4px;
+}
+
+.dark-scrollbar::-webkit-scrollbar-thumb {
+  background: #30363d;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.dark-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #484f58;
+}
+
+/* Light Theme Scrollbar */
+.light-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.light-scrollbar::-webkit-scrollbar-track {
+  background: #f6f8fa;
+  border-radius: 4px;
+}
+
+.light-scrollbar::-webkit-scrollbar-thumb {
+  background: #d0d7de;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.light-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #b1bac4;
+}
+
+/* Firefox Scrollbar */
+.dark-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #30363d #0d1117;
+}
+
+.light-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #d0d7de #f6f8fa;
+}
 

@@ -1,7 +1,15 @@
 import { useState, useEffect } from 'react'
 import Editor from '@monaco-editor/react'
 import { v4 as uuidv4 } from 'uuid'
-import { supabase, type CodePost } from './lib/supabase'
+import { supabase, type CodePost, type ReactionType, type Reactions } from './lib/supabase'
+
+const reactionEmojis: Record<ReactionType, string> = {
+  like: '👍',
+  love: '❤️',
+  wow: '😮',
+  sad: '😢',
+  angry: '😠',
+}
 
 interface DeleteModalProps {
   show: boolean
@@ -84,6 +92,7 @@ function App() {
   const [expandedPost, setExpandedPost] = useState<string | null>(null)
   const [deleteModalPost, setDeleteModalPost] = useState<string | null>(null)
   const [copiedPost, setCopiedPost] = useState<string | null>(null)
+  const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [showSettingsModal, setShowSettingsModal] = useState(false)
@@ -114,6 +123,45 @@ function App() {
     // Save theme to localStorage whenever it changes
     localStorage.setItem('theme', theme)
   }, [theme])
+
+  useEffect(() => {
+    // Close reaction picker on scroll or click outside
+    const handleScrollOrClick = (e: Event) => {
+      if (showReactionPicker) {
+        // Check if click is inside picker or reaction button
+        const target = e.target as HTMLElement
+        const isInsidePicker = target.closest('[data-reaction-picker]')
+        const isReactionButton = target.closest('[data-reaction-button]')
+        
+        if (!isInsidePicker && !isReactionButton) {
+          setShowReactionPicker(null)
+        }
+      }
+    }
+
+    const handleScroll = (e: Event) => {
+      if (showReactionPicker) {
+        // Check if scroll is inside picker
+        const target = e.target as HTMLElement
+        const isInsidePicker = target.closest('[data-reaction-picker]')
+        
+        // Only close if scroll is outside picker
+        if (!isInsidePicker) {
+          setShowReactionPicker(null)
+        }
+      }
+    }
+
+    if (showReactionPicker) {
+      window.addEventListener('scroll', handleScroll, true)
+      window.addEventListener('click', handleScrollOrClick, true)
+      
+      return () => {
+        window.removeEventListener('scroll', handleScroll, true)
+        window.removeEventListener('click', handleScrollOrClick, true)
+      }
+    }
+  }, [showReactionPicker])
 
   useEffect(() => {
     if (userProfile) {
@@ -288,7 +336,8 @@ function App() {
       copies: 0,
       copied_by: [],
       downloads: 0,
-      downloaded_by: []
+      downloaded_by: [],
+      reactions: {}
     }
 
     try {
@@ -315,41 +364,88 @@ function App() {
     }
   }
 
-  const toggleLike = async (postId: string) => {
+  const toggleReaction = async (postId: string, reactionType: ReactionType) => {
     const post = posts.find(p => p.id === postId)
     if (!post) return
 
-    const likedBy = post.liked_by || []
-    const hasLiked = likedBy.includes(userId)
-    
-    const updatedLikedBy = hasLiked 
-      ? likedBy.filter(id => id !== userId)
-      : [...likedBy, userId]
-    
-    const updatedLikes = hasLiked ? post.likes - 1 : post.likes + 1
+    // Initialize reactions as dynamic object
+    const reactions: Reactions = post.reactions ? { ...post.reactions } : {}
 
-    // Optimistic update
-    setPosts(prev => prev.map(p => 
-      p.id === postId 
-        ? { ...p, likes: updatedLikes, liked_by: updatedLikedBy }
-        : p
-    ))
+    // Ensure the reaction type exists
+    if (!reactions[reactionType]) {
+      reactions[reactionType] = { count: 0, users: [] }
+    }
+
+    // Deep clone all reactions
+    const updatedReactions: Reactions = {}
+    Object.keys(reactions).forEach((key) => {
+      updatedReactions[key] = {
+        count: reactions[key].count,
+        users: [...reactions[key].users]
+      }
+    })
+
+    // Check if user already reacted with this type
+    const hasReacted = updatedReactions[reactionType]?.users.includes(userId) || false
+    
+    // Remove user from all reaction types first
+    Object.keys(updatedReactions).forEach((key) => {
+      const userIndex = updatedReactions[key].users.indexOf(userId)
+      if (userIndex > -1) {
+        updatedReactions[key].users = updatedReactions[key].users.filter(id => id !== userId)
+        updatedReactions[key].count = Math.max(0, updatedReactions[key].count - 1)
+        
+        // Remove reaction type if count is 0
+        if (updatedReactions[key].count === 0) {
+          delete updatedReactions[key]
+        }
+      }
+    })
+
+    // If not the same reaction, add the new one
+    if (!hasReacted) {
+      if (!updatedReactions[reactionType]) {
+        updatedReactions[reactionType] = { count: 0, users: [] }
+      }
+      updatedReactions[reactionType].users = [...updatedReactions[reactionType].users, userId]
+      updatedReactions[reactionType].count += 1
+    }
+
+    console.log('🔄 Updated reactions:', updatedReactions)
+
+    // Optimistic update with new object reference
+    setPosts(prev => {
+      const newPosts = prev.map(p => 
+        p.id === postId 
+          ? { ...p, reactions: updatedReactions }
+          : p
+      )
+      console.log('✅ New posts state:', newPosts.find(p => p.id === postId)?.reactions)
+      return newPosts
+    })
+
+    // Close picker
+    setShowReactionPicker(null)
 
     try {
       const { error } = await supabase
         .from('code_posts')
-        .update({ 
-          likes: updatedLikes,
-          liked_by: updatedLikedBy
-        })
+        .update({ reactions: updatedReactions })
         .eq('id', postId)
 
       if (error) throw error
     } catch (error) {
-      console.error('Error toggling like:', error)
+      console.error('Error toggling reaction:', error)
       // Revert on error
       loadPosts()
     }
+  }
+
+  const getActiveReactions = (post: CodePost): ReactionType[] => {
+    if (!post.reactions) return []
+    
+    return (Object.keys(post.reactions) as ReactionType[])
+      .filter((key) => post.reactions![key]?.count > 0)
   }
 
   const confirmDelete = async () => {
@@ -771,7 +867,6 @@ function App() {
         ) : (
           <div className="grid grid-cols-1 gap-6">
             {posts.map((post) => {
-              const hasLiked = (post.liked_by || []).includes(userId)
               const isCopied = copiedPost === post.id
               
               return (
@@ -856,97 +951,171 @@ function App() {
                         hideCursorInOverviewRuler: true,
                         smoothScrolling: true,
                       }}
+                      beforeMount={(monaco) => {
+                        // Disable all language validation
+                        monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+                          noSemanticValidation: true,
+                          noSyntaxValidation: true,
+                        })
+                        monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+                          noSemanticValidation: true,
+                          noSyntaxValidation: true,
+                        })
+                      }}
                     />
                   </div>
 
                   <div className="p-5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <button
-                          onClick={() => toggleLike(post.id)}
-                          className={`group flex items-center space-x-2 px-4 py-2.5 rounded-xl transition-all font-medium ${
-                            hasLiked
-                              ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white shadow-lg shadow-red-500/30'
-                              : theme === 'dark'
-                              ? 'bg-[#21262d] text-gray-400 hover:text-red-400 hover:bg-red-400/10'
-                              : 'bg-gray-100 text-gray-600 hover:text-red-500 hover:bg-red-50'
-                          }`}
-                        >
-                          <svg className={`w-5 h-5 ${hasLiked ? 'animate-pulse' : 'group-hover:scale-110'} transition-transform`} fill={hasLiked ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-                          </svg>
-                          <span>{post.likes}</span>
-                        </button>
-                        
-                        <button
-                          onClick={() => copyCode(post.code, post.id)}
-                          className={`group flex items-center space-x-2 px-4 py-2.5 rounded-xl transition-all font-medium ${
-                            isCopied
-                              ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg shadow-green-500/30'
-                              : theme === 'dark'
-                              ? 'bg-[#21262d] text-gray-400 hover:text-blue-400 hover:bg-blue-400/10'
-                              : 'bg-gray-100 text-gray-600 hover:text-blue-500 hover:bg-blue-50'
-                          }`}
-                        >
-                          <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            {isCopied ? (
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            ) : (
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                            )}
-                          </svg>
-                          <span>{isCopied ? 'Copied!' : 'Copy'}</span>
-                        </button>
-
-                        <button
-                          onClick={() => downloadCode(post.code, post.title, post.language, post.id)}
-                          className={`group flex items-center space-x-2 px-4 py-2.5 rounded-xl transition-all font-medium ${
-                            theme === 'dark'
-                              ? 'bg-[#21262d] text-gray-400 hover:text-green-400 hover:bg-green-400/10'
-                              : 'bg-gray-100 text-gray-600 hover:text-green-500 hover:bg-green-50'
-                          }`}
-                        >
-                          <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                          </svg>
-                          <span>Download</span>
-                        </button>
-
-                        <button
-                          onClick={() => setExpandedPost(expandedPost === post.id ? null : post.id)}
-                          className={`group flex items-center space-x-2 px-4 py-2.5 rounded-xl transition-all font-medium ${
-                            theme === 'dark'
-                              ? 'bg-[#21262d] text-gray-400 hover:text-purple-400 hover:bg-purple-400/10'
-                              : 'bg-gray-100 text-gray-600 hover:text-purple-500 hover:bg-purple-50'
-                          }`}
-                        >
-                          <svg className={`w-5 h-5 transition-transform duration-300 ${expandedPost === post.id ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                          </svg>
-                          <span>{expandedPost === post.id ? 'Collapse' : 'Expand'}</span>
-                        </button>
-                      </div>
-
-                      {(post.copies > 0 || post.downloads > 0) && (
-                        <div className={`flex items-center space-x-4 text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
-                          {post.copies > 0 && (
-                            <div className="flex items-center space-x-2">
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                              </svg>
-                              <span>{post.copies}</span>
-                            </div>
-                          )}
-                          {post.downloads > 0 && (
-                            <div className="flex items-center space-x-2">
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                              </svg>
-                              <span>{post.downloads}</span>
-                            </div>
-                          )}
+                    {/* Reactions Display (Facebook/Discord style) */}
+                    <div className="space-y-3 mb-4">
+                      {/* Emoji Summary - Show active reactions */}
+                      {getActiveReactions(post).length > 0 && (
+                        <div className="flex items-center flex-wrap gap-1.5">
+                          {getActiveReactions(post).map((reactionType) => {
+                            const reaction = post.reactions?.[reactionType]
+                            if (!reaction || reaction.count === 0) return null
+                            
+                            const hasReacted = reaction.users.includes(userId)
+                            
+                            return (
+                              <button
+                                key={reactionType}
+                                onClick={() => toggleReaction(post.id, reactionType)}
+                                className={`group flex items-center justify-center space-x-1 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all hover:scale-105 ${
+                                  hasReacted
+                                    ? theme === 'dark'
+                                      ? 'bg-blue-500/20 border border-blue-500/50 text-blue-400'
+                                      : 'bg-blue-50 border border-blue-500/50 text-blue-600'
+                                    : theme === 'dark'
+                                    ? 'bg-[#21262d] border border-[#30363d] text-gray-400 hover:bg-[#30363d] hover:border-[#3f4147]'
+                                    : 'bg-gray-50 border border-gray-200 text-gray-600 hover:bg-gray-100 hover:border-gray-300'
+                                }`}
+                              >
+                                <span className="text-base leading-none">{reactionEmojis[reactionType]}</span>
+                                <span className={`text-xs font-semibold leading-none ${hasReacted ? 'text-blue-500' : ''}`}>
+                                  {reaction.count}
+                                </span>
+                              </button>
+                            )
+                          })}
                         </div>
                       )}
+
+                      {/* Add Reaction Button */}
+                      <div className="relative">
+                        <button
+                          data-reaction-button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setShowReactionPicker(showReactionPicker === post.id ? null : post.id)
+                          }}
+                          className={`flex items-center justify-center w-10 h-10 rounded-full transition-all hover:scale-110 ${
+                            showReactionPicker === post.id
+                              ? theme === 'dark'
+                                ? 'bg-blue-500/20 border-2 border-blue-500 text-blue-400'
+                                : 'bg-blue-50 border-2 border-blue-500 text-blue-600'
+                              : theme === 'dark'
+                              ? 'bg-[#21262d] border-2 border-[#30363d] text-gray-400 hover:bg-[#30363d] hover:border-[#3f4147] hover:text-gray-300'
+                              : 'bg-gray-50 border-2 border-gray-200 text-gray-600 hover:bg-gray-100 hover:border-gray-300'
+                          }`}
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                          </svg>
+                        </button>
+
+                        {/* Emoji Picker (Facebook style - simple) */}
+                        {showReactionPicker === post.id && (
+                          <div 
+                            data-reaction-picker
+                            className={`absolute bottom-full left-0 mb-2 ${
+                              theme === 'dark' ? 'bg-[#2b2d31] border-[#3f4147]' : 'bg-white border-gray-200'
+                            } border-2 rounded-2xl shadow-2xl p-3 z-50 animate-in zoom-in-95 slide-in-from-bottom-2 duration-200`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="flex items-center gap-2">
+                              {(['like', 'love', 'wow', 'sad', 'angry'] as ReactionType[]).map((reaction) => {
+                                const hasReacted = post.reactions?.[reaction]?.users.includes(userId)
+                                
+                                return (
+                                  <button
+                                    key={reaction}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      toggleReaction(post.id, reaction)
+                                    }}
+                                    className={`relative p-2 rounded-full transition-all hover:scale-125 hover:-translate-y-1 ${
+                                      hasReacted
+                                        ? theme === 'dark'
+                                          ? 'bg-blue-500/20 ring-2 ring-blue-500'
+                                          : 'bg-blue-100 ring-2 ring-blue-500'
+                                        : theme === 'dark'
+                                        ? 'hover:bg-[#35373c]'
+                                        : 'hover:bg-gray-100'
+                                    }`}
+                                    title={reaction}
+                                  >
+                                    <span className="text-3xl leading-none block">{reactionEmojis[reaction]}</span>
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => copyCode(post.code, post.id)}
+                        className={`group flex items-center space-x-2 px-3 py-2 rounded-lg transition-all text-sm font-medium ${
+                          isCopied
+                            ? theme === 'dark'
+                              ? 'bg-green-500/10 text-green-400'
+                              : 'bg-green-50 text-green-600'
+                            : theme === 'dark'
+                            ? 'text-gray-400 hover:bg-[#21262d]'
+                            : 'text-gray-600 hover:bg-gray-100'
+                        }`}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          {isCopied ? (
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          ) : (
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          )}
+                        </svg>
+                        <span>{isCopied ? 'Copied' : 'Copy'}</span>
+                      </button>
+
+                      <button
+                        onClick={() => downloadCode(post.code, post.title, post.language, post.id)}
+                        className={`group flex items-center space-x-2 px-3 py-2 rounded-lg transition-all text-sm font-medium ${
+                          theme === 'dark'
+                            ? 'text-gray-400 hover:bg-[#21262d]'
+                            : 'text-gray-600 hover:bg-gray-100'
+                        }`}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        <span>Download</span>
+                      </button>
+
+                      <button
+                        onClick={() => setExpandedPost(expandedPost === post.id ? null : post.id)}
+                        className={`group flex items-center space-x-2 px-3 py-2 rounded-lg transition-all text-sm font-medium ${
+                          theme === 'dark'
+                            ? 'text-gray-400 hover:bg-[#21262d]'
+                            : 'text-gray-600 hover:bg-gray-100'
+                        }`}
+                      >
+                        <svg className={`w-4 h-4 transition-transform duration-300 ${expandedPost === post.id ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                        <span>{expandedPost === post.id ? 'Collapse' : 'Expand'}</span>
+                      </button>
                     </div>
                   </div>
                 </article>
@@ -957,35 +1126,35 @@ function App() {
       </main>
 
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
           <div className={`${
-            theme === 'dark' ? 'bg-[#161b22]' : 'bg-white'
-          } rounded-3xl shadow-2xl max-w-5xl w-full max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-300`}>
+            theme === 'dark' ? 'bg-[#0d1117] border-[#21262d]' : 'bg-white border-gray-100'
+          } rounded-2xl border shadow-2xl max-w-5xl w-full max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-300 overflow-hidden`}>
             {/* Header */}
-            <div className={`px-8 py-6 border-b ${theme === 'dark' ? 'border-[#30363d]' : 'border-gray-200'}`}>
+            <div className={`px-6 py-5 border-b ${theme === 'dark' ? 'border-[#21262d]' : 'border-gray-100'}`}>
               <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-4">
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center shadow-lg">
-                    <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center shadow-lg">
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
                     </svg>
                   </div>
                   <div>
-                    <h2 className={`text-2xl font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+                    <h2 className={`text-xl font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
                       Share Your Code
                     </h2>
-                    <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+                    <p className={`text-xs ${theme === 'dark' ? 'text-gray-500' : 'text-gray-600'}`}>
                       Post your code snippet to the community
                     </p>
                   </div>
                 </div>
                 <button
                   onClick={() => setShowCreateModal(false)}
-                  className={`p-3 rounded-xl transition-all ${
-                    theme === 'dark' ? 'text-gray-400 hover:text-white hover:bg-[#30363d]' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                  className={`p-2 rounded-lg transition-all ${
+                    theme === 'dark' ? 'text-gray-500 hover:text-white hover:bg-[#21262d]' : 'text-gray-400 hover:text-gray-900 hover:bg-gray-100'
                   }`}
                 >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
@@ -993,42 +1162,42 @@ function App() {
             </div>
 
             {/* Content */}
-            <div className="flex-1 overflow-y-auto px-8 py-6">
-              <div className="space-y-6">
+            <div className={`flex-1 overflow-y-auto px-6 py-5 ${theme === 'dark' ? 'dark-scrollbar' : 'light-scrollbar'}`}>
+              <div className="space-y-5">
                 {/* Title Input */}
                 <div>
-                  <label className={`flex items-center space-x-2 text-sm font-semibold mb-3 ${theme === 'dark' ? 'text-gray-200' : 'text-gray-800'}`}>
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <label className={`flex items-center space-x-2 text-xs font-semibold mb-2 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-700'}`}>
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
                     </svg>
-                    <span>Title</span>
-                    <span className={`text-xs font-normal ${theme === 'dark' ? 'text-gray-500' : 'text-gray-500'}`}>(optional)</span>
+                    <span>TITLE</span>
+                    <span className={`text-xs font-normal ${theme === 'dark' ? 'text-gray-600' : 'text-gray-500'}`}>(optional)</span>
                   </label>
                   <input
                     type="text"
                     value={newPost.title}
                     onChange={(e) => setNewPost({ ...newPost, title: e.target.value })}
                     placeholder="Give your code a descriptive title..."
-                    className={`w-full px-5 py-3.5 rounded-xl border-2 ${
+                    className={`w-full px-4 py-3 rounded-lg border ${
                       theme === 'dark'
-                        ? 'bg-[#0d1117] border-[#30363d] text-white placeholder-gray-500 focus:border-blue-500'
-                        : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-blue-500'
-                    } focus:ring-4 focus:ring-blue-500/20 transition-all outline-none text-lg`}
+                        ? 'bg-[#161b22] border-[#21262d] text-white placeholder-gray-600 focus:border-blue-500'
+                        : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400 focus:border-blue-500'
+                    } focus:ring-2 focus:ring-blue-500/20 transition-all outline-none`}
                   />
                 </div>
 
                 {/* Code Editor */}
                 <div>
-                  <label className={`flex items-center space-x-2 text-sm font-semibold mb-3 ${theme === 'dark' ? 'text-gray-200' : 'text-gray-800'}`}>
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <label className={`flex items-center space-x-2 text-xs font-semibold mb-2 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-700'}`}>
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
                     </svg>
-                    <span>Code</span>
+                    <span>CODE</span>
                     <span className="text-red-500">*</span>
                   </label>
-                  <div className={`border-2 rounded-xl overflow-hidden ${
-                    theme === 'dark' ? 'border-[#30363d]' : 'border-gray-200'
-                  } shadow-inner`} style={{ height: '450px' }}>
+                  <div className={`border rounded-lg overflow-hidden ${
+                    theme === 'dark' ? 'border-[#21262d]' : 'border-gray-200'
+                  }`} style={{ height: '450px' }}>
                     <Editor
                       height="100%"
                       defaultLanguage="javascript"
@@ -1038,8 +1207,8 @@ function App() {
                       loading={
                         <div className="flex items-center justify-center h-full">
                           <div className="flex flex-col items-center space-y-3">
-                            <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
-                            <div className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+                            <div className="w-10 h-10 border-3 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
+                            <div className={`text-xs ${theme === 'dark' ? 'text-gray-500' : 'text-gray-600'}`}>
                               Loading editor...
                             </div>
                           </div>
@@ -1055,15 +1224,32 @@ function App() {
                         wordWrap: 'on',
                         formatOnPaste: true,
                         formatOnType: true,
-                        padding: { top: 20, bottom: 20 },
+                        padding: { top: 16, bottom: 16 },
                         smoothScrolling: true,
                         cursorBlinking: 'smooth',
                         cursorSmoothCaretAnimation: 'on',
+                        scrollbar: {
+                          vertical: 'auto',
+                          horizontal: 'auto',
+                          verticalScrollbarSize: 8,
+                          horizontalScrollbarSize: 8,
+                        },
+                      }}
+                      beforeMount={(monaco) => {
+                        // Disable all language validation
+                        monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+                          noSemanticValidation: true,
+                          noSyntaxValidation: true,
+                        })
+                        monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+                          noSemanticValidation: true,
+                          noSyntaxValidation: true,
+                        })
                       }}
                     />
                   </div>
                   {!newPost.code.trim() && (
-                    <p className={`mt-2 text-xs flex items-center space-x-1 ${theme === 'dark' ? 'text-gray-500' : 'text-gray-600'}`}>
+                    <p className={`mt-2 text-xs flex items-center space-x-1 ${theme === 'dark' ? 'text-gray-600' : 'text-gray-500'}`}>
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
@@ -1075,33 +1261,16 @@ function App() {
             </div>
 
             {/* Footer */}
-            <div className={`px-8 py-6 border-t ${theme === 'dark' ? 'border-[#30363d] bg-[#0d1117]' : 'border-gray-200 bg-gray-50'}`}>
-              <div className="flex items-center justify-between">
-                <div className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
-                  {newPost.code.trim() ? (
-                    <span className="flex items-center space-x-2">
-                      <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      <span>{newPost.code.split('\n').length} lines • {newPost.code.length} characters</span>
-                    </span>
-                  ) : (
-                    <span className="flex items-center space-x-2">
-                      <svg className="w-4 h-4 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                      </svg>
-                      <span>Code is required</span>
-                    </span>
-                  )}
-                </div>
-                <div className="flex space-x-3">
+            <div className={`px-6 py-4 border-t ${theme === 'dark' ? 'border-[#21262d] bg-[#0d1117]' : 'border-gray-100 bg-gray-50'}`}>
+              <div className="flex items-center justify-end">
+                <div className="flex space-x-2">
                   <button
                     onClick={() => setShowCreateModal(false)}
                     disabled={uploading}
-                    className={`px-6 py-3 rounded-xl transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed ${
+                    className={`px-5 py-2.5 rounded-lg transition-all font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
                       theme === 'dark'
-                        ? 'bg-[#21262d] hover:bg-[#30363d] text-white'
-                        : 'bg-white hover:bg-gray-100 text-gray-900 border-2 border-gray-200'
+                        ? 'bg-[#21262d] hover:bg-[#30363d] text-gray-300'
+                        : 'bg-white hover:bg-gray-100 text-gray-700 border border-gray-200'
                     }`}
                   >
                     Cancel
@@ -1109,11 +1278,11 @@ function App() {
                   <button
                     onClick={createPost}
                     disabled={!newPost.code.trim() || uploading}
-                    className="px-8 py-3 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed text-white rounded-xl transition-all font-bold shadow-xl hover:shadow-2xl hover:shadow-green-500/30 hover:scale-[1.02] disabled:hover:scale-100 flex items-center justify-center space-x-2 min-w-[140px]"
+                    className="px-6 py-2.5 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed text-white rounded-lg transition-all font-semibold text-sm shadow-lg hover:shadow-xl hover:shadow-green-500/20 hover:scale-[1.02] disabled:hover:scale-100 flex items-center justify-center space-x-2 min-w-[130px]"
                   >
                     {uploading ? (
                       <>
-                        <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>
@@ -1121,7 +1290,7 @@ function App() {
                       </>
                     ) : (
                       <>
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
                         <span>Publish Post</span>
