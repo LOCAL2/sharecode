@@ -93,6 +93,7 @@ function App() {
   const [deleteModalPost, setDeleteModalPost] = useState<string | null>(null)
   const [copiedPost, setCopiedPost] = useState<string | null>(null)
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null)
+  const [showReactionTooltip, setShowReactionTooltip] = useState<{ postId: string; reactionType: ReactionType } | null>(null)
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [showSettingsModal, setShowSettingsModal] = useState(false)
@@ -108,6 +109,7 @@ function App() {
     }
     return id
   })
+  const [pendingUpdates, setPendingUpdates] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     // Check if user has profile
@@ -204,7 +206,17 @@ function App() {
       if (error) throw error
 
       if (data) {
-        setPosts(data)
+        setPosts(prev => {
+          // Don't overwrite posts that have pending updates
+          return data.map(newPost => {
+            if (pendingUpdates.has(newPost.id)) {
+              // Keep the optimistic version
+              const existingPost = prev.find(p => p.id === newPost.id)
+              return existingPost || newPost
+            }
+            return newPost
+          })
+        })
       }
     } catch (error) {
       console.error('Error loading posts:', error)
@@ -366,7 +378,7 @@ function App() {
 
   const toggleReaction = async (postId: string, reactionType: ReactionType) => {
     const post = posts.find(p => p.id === postId)
-    if (!post) return
+    if (!post || !userProfile) return
 
     // Initialize reactions as dynamic object
     const reactions: Reactions = post.reactions ? { ...post.reactions } : {}
@@ -386,19 +398,16 @@ function App() {
     })
 
     // Check if user already reacted with this type
-    const hasReacted = updatedReactions[reactionType]?.users.includes(userId) || false
+    const hasReacted = updatedReactions[reactionType]?.users.some(u => u.id === userId) || false
     
     // Remove user from all reaction types first
     Object.keys(updatedReactions).forEach((key) => {
-      const userIndex = updatedReactions[key].users.indexOf(userId)
-      if (userIndex > -1) {
-        updatedReactions[key].users = updatedReactions[key].users.filter(id => id !== userId)
-        updatedReactions[key].count = Math.max(0, updatedReactions[key].count - 1)
-        
-        // Remove reaction type if count is 0
-        if (updatedReactions[key].count === 0) {
-          delete updatedReactions[key]
-        }
+      updatedReactions[key].users = updatedReactions[key].users.filter(u => u.id !== userId)
+      updatedReactions[key].count = updatedReactions[key].users.length
+      
+      // Remove reaction type if count is 0
+      if (updatedReactions[key].count === 0) {
+        delete updatedReactions[key]
       }
     })
 
@@ -407,11 +416,17 @@ function App() {
       if (!updatedReactions[reactionType]) {
         updatedReactions[reactionType] = { count: 0, users: [] }
       }
-      updatedReactions[reactionType].users = [...updatedReactions[reactionType].users, userId]
-      updatedReactions[reactionType].count += 1
+      updatedReactions[reactionType].users = [
+        ...updatedReactions[reactionType].users, 
+        { id: userId, name: userProfile.name }
+      ]
+      updatedReactions[reactionType].count = updatedReactions[reactionType].users.length
     }
 
     console.log('🔄 Updated reactions:', updatedReactions)
+
+    // Mark as pending
+    setPendingUpdates(prev => new Set(prev).add(postId))
 
     // Optimistic update with new object reference
     setPosts(prev => {
@@ -434,8 +449,22 @@ function App() {
         .eq('id', postId)
 
       if (error) throw error
+      
+      // Remove from pending after successful update
+      setTimeout(() => {
+        setPendingUpdates(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(postId)
+          return newSet
+        })
+      }, 2000)
     } catch (error) {
       console.error('Error toggling reaction:', error)
+      setPendingUpdates(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(postId)
+        return newSet
+      })
       // Revert on error
       loadPosts()
     }
@@ -487,6 +516,9 @@ function App() {
       const updatedCopiedBy = [...copiedBy, userId]
       const updatedCopies = post.copies + 1
 
+      // Mark as pending
+      setPendingUpdates(prev => new Set(prev).add(postId))
+
       // Optimistic update
       setPosts(prev => prev.map(p => 
         p.id === postId 
@@ -504,8 +536,22 @@ function App() {
           .eq('id', postId)
 
         if (error) throw error
+        
+        // Remove from pending after successful update
+        setTimeout(() => {
+          setPendingUpdates(prev => {
+            const newSet = new Set(prev)
+            newSet.delete(postId)
+            return newSet
+          })
+        }, 2000)
       } catch (error) {
         console.error('Error updating copy count:', error)
+        setPendingUpdates(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(postId)
+          return newSet
+        })
         loadPosts()
       }
     }
@@ -557,6 +603,9 @@ function App() {
       const updatedDownloadedBy = [...downloadedBy, userId]
       const updatedDownloads = post.downloads + 1
 
+      // Mark as pending
+      setPendingUpdates(prev => new Set(prev).add(postId))
+
       // Optimistic update
       setPosts(prev => prev.map(p => 
         p.id === postId 
@@ -574,8 +623,22 @@ function App() {
           .eq('id', postId)
 
         if (error) throw error
+        
+        // Remove from pending after successful update
+        setTimeout(() => {
+          setPendingUpdates(prev => {
+            const newSet = new Set(prev)
+            newSet.delete(postId)
+            return newSet
+          })
+        }, 2000)
       } catch (error) {
         console.error('Error updating download count:', error)
+        setPendingUpdates(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(postId)
+          return newSet
+        })
         loadPosts()
       }
     }
@@ -975,27 +1038,46 @@ function App() {
                             const reaction = post.reactions?.[reactionType]
                             if (!reaction || reaction.count === 0) return null
                             
-                            const hasReacted = reaction.users.includes(userId)
+                            const hasReacted = reaction.users.some(u => u.id === userId)
+                            const isTooltipVisible = showReactionTooltip?.postId === post.id && showReactionTooltip?.reactionType === reactionType
                             
                             return (
-                              <button
-                                key={reactionType}
-                                onClick={() => toggleReaction(post.id, reactionType)}
-                                className={`group flex items-center justify-center space-x-1 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all hover:scale-105 ${
-                                  hasReacted
-                                    ? theme === 'dark'
-                                      ? 'bg-blue-500/20 border border-blue-500/50 text-blue-400'
-                                      : 'bg-blue-50 border border-blue-500/50 text-blue-600'
-                                    : theme === 'dark'
-                                    ? 'bg-[#21262d] border border-[#30363d] text-gray-400 hover:bg-[#30363d] hover:border-[#3f4147]'
-                                    : 'bg-gray-50 border border-gray-200 text-gray-600 hover:bg-gray-100 hover:border-gray-300'
-                                }`}
-                              >
-                                <span className="text-base leading-none">{reactionEmojis[reactionType]}</span>
-                                <span className={`text-xs font-semibold leading-none ${hasReacted ? 'text-blue-500' : ''}`}>
-                                  {reaction.count}
-                                </span>
-                              </button>
+                              <div key={reactionType} className="relative">
+                                <button
+                                  onClick={() => toggleReaction(post.id, reactionType)}
+                                  onMouseEnter={() => setShowReactionTooltip({ postId: post.id, reactionType })}
+                                  onMouseLeave={() => setShowReactionTooltip(null)}
+                                  className={`group flex items-center justify-center space-x-1 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all hover:scale-105 ${
+                                    hasReacted
+                                      ? theme === 'dark'
+                                        ? 'bg-blue-500/20 border border-blue-500/50 text-blue-400'
+                                        : 'bg-blue-50 border border-blue-500/50 text-blue-600'
+                                      : theme === 'dark'
+                                      ? 'bg-[#21262d] border border-[#30363d] text-gray-400 hover:bg-[#30363d] hover:border-[#3f4147]'
+                                      : 'bg-gray-50 border border-gray-200 text-gray-600 hover:bg-gray-100 hover:border-gray-300'
+                                  }`}
+                                >
+                                  <span className="text-base leading-none">{reactionEmojis[reactionType]}</span>
+                                  <span className={`text-xs font-semibold leading-none ${hasReacted ? 'text-blue-500' : ''}`}>
+                                    {reaction.count}
+                                  </span>
+                                </button>
+                                
+                                {/* Custom Tooltip */}
+                                {isTooltipVisible && (
+                                  <div className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 rounded-lg shadow-xl z-50 whitespace-nowrap pointer-events-none animate-in fade-in zoom-in-95 duration-200 ${
+                                    theme === 'dark' ? 'bg-[#2b2d31] border border-[#3f4147] text-gray-200' : 'bg-white border border-gray-200 text-gray-800'
+                                  }`}>
+                                    <div className="text-xs font-medium">
+                                      {reaction.users.map(u => u.name).join(', ')}
+                                    </div>
+                                    {/* Arrow */}
+                                    <div className={`absolute top-full left-1/2 -translate-x-1/2 -mt-px w-2 h-2 rotate-45 ${
+                                      theme === 'dark' ? 'bg-[#2b2d31] border-r border-b border-[#3f4147]' : 'bg-white border-r border-b border-gray-200'
+                                    }`} />
+                                  </div>
+                                )}
+                              </div>
                             )
                           })}
                         </div>
@@ -1035,7 +1117,7 @@ function App() {
                           >
                             <div className="flex items-center gap-2">
                               {(['like', 'love', 'wow', 'sad', 'angry'] as ReactionType[]).map((reaction) => {
-                                const hasReacted = post.reactions?.[reaction]?.users.includes(userId)
+                                const hasReacted = post.reactions?.[reaction]?.users.some(u => u.id === userId)
                                 
                                 return (
                                   <button
@@ -1087,6 +1169,9 @@ function App() {
                           )}
                         </svg>
                         <span>{isCopied ? 'Copied' : 'Copy'}</span>
+                        <span className={`text-xs ${theme === 'dark' ? 'text-gray-500' : 'text-gray-500'}`}>
+                          ({post.copies.toLocaleString()})
+                        </span>
                       </button>
 
                       <button
@@ -1101,6 +1186,9 @@ function App() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                         </svg>
                         <span>Download</span>
+                        <span className={`text-xs ${theme === 'dark' ? 'text-gray-500' : 'text-gray-500'}`}>
+                          ({post.downloads.toLocaleString()})
+                        </span>
                       </button>
 
                       <button

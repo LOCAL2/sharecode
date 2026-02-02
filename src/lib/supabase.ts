@@ -7,8 +7,13 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
 export type ReactionType = 'like' | 'love' | 'wow' | 'sad' | 'angry'
 
+export interface ReactionUser {
+  id: string
+  name: string
+}
+
 export interface Reactions {
-  [key: string]: { count: number; users: string[] }
+  [key: string]: { count: number; users: ReactionUser[] }
 }
 
 export interface CodePost {
