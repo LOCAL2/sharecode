@@ -31,5 +31,17 @@ export interface CodePost {
   downloads: number
   downloaded_by: string[]
   reactions?: Reactions
+  comment_count?: number
   created_at?: string
+}
+
+export interface Comment {
+  id: string
+  post_id: string
+  user_id: string
+  user_name: string
+  user_avatar: string | null
+  content: string
+  created_at: string
+  updated_at: string
 }

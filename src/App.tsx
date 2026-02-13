@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import Editor from '@monaco-editor/react'
 import { v4 as uuidv4 } from 'uuid'
-import { supabase, type CodePost, type ReactionType, type Reactions } from './lib/supabase'
+import { supabase, type CodePost, type ReactionType, type Reactions, type Comment } from './lib/supabase'
 
 const reactionEmojis: Record<ReactionType, string> = {
   like: '👍',
@@ -10,6 +10,68 @@ const reactionEmojis: Record<ReactionType, string> = {
   sad: '😢',
   angry: '😠',
 }
+
+// Separate CommentInput component to prevent re-renders
+const CommentInput = React.memo(({ 
+  postId, 
+  userProfile, 
+  theme, 
+  onSubmit 
+}: { 
+  postId: string
+  userProfile: { name: string; avatar: string } | null
+  theme: 'light' | 'dark'
+  onSubmit: (postId: string, content: string) => void
+}) => {
+  const [value, setValue] = useState('')
+
+  const handleSubmit = () => {
+    if (value.trim()) {
+      onSubmit(postId, value.trim())
+      setValue('')
+    }
+  }
+
+  return (
+    <div className="mb-4">
+      <div className="flex items-start space-x-3">
+        {userProfile?.avatar ? (
+          <img 
+            src={userProfile.avatar} 
+            alt={userProfile.name}
+            className="w-8 h-8 rounded-full object-cover"
+          />
+        ) : (
+          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center text-white font-bold text-sm">
+            {userProfile?.name.charAt(0).toUpperCase()}
+          </div>
+        )}
+        <div className="flex-1">
+          <textarea
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="Write a comment..."
+            className={`w-full px-3 py-2 rounded-lg border resize-none ${
+              theme === 'dark'
+                ? 'bg-[#0d1117] border-[#30363d] text-white placeholder-gray-500 focus:border-blue-500'
+                : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-blue-500'
+            } focus:ring-2 focus:ring-blue-500/20 transition-all outline-none`}
+            rows={2}
+          />
+          <div className="flex items-center justify-end mt-2">
+            <button
+              onClick={handleSubmit}
+              disabled={!value.trim()}
+              className="px-4 py-1.5 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-all"
+            >
+              Post
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+})
 
 interface DeleteModalProps {
   show: boolean
@@ -94,6 +156,9 @@ function App() {
   const [copiedPost, setCopiedPost] = useState<string | null>(null)
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null)
   const [showReactionTooltip, setShowReactionTooltip] = useState<{ postId: string; reactionType: ReactionType } | null>(null)
+  const [showComments, setShowComments] = useState<string | null>(null)
+  const [comments, setComments] = useState<Record<string, Comment[]>>({})
+  const commentPostMapRef = useRef<Record<string, string>>({}) // Use ref instead of state
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [showSettingsModal, setShowSettingsModal] = useState(false)
@@ -148,7 +213,6 @@ function App() {
           })
 
         if (error) throw error
-        console.log('✅ User profile synced to database')
       }
     } catch (error) {
       console.error('Error syncing user to database:', error)
@@ -542,21 +606,15 @@ function App() {
       updatedReactions[reactionType].count = updatedReactions[reactionType].users.length
     }
 
-    console.log('🔄 Updated reactions:', updatedReactions)
-
     // Mark as pending
     setPendingUpdates(prev => new Set(prev).add(postId))
 
     // Optimistic update with new object reference
-    setPosts(prev => {
-      const newPosts = prev.map(p => 
-        p.id === postId 
-          ? { ...p, reactions: updatedReactions }
-          : p
-      )
-      console.log('✅ New posts state:', newPosts.find(p => p.id === postId)?.reactions)
-      return newPosts
-    })
+    setPosts(prev => prev.map(p => 
+      p.id === postId 
+        ? { ...p, reactions: updatedReactions }
+        : p
+    ))
 
     // Close picker
     setShowReactionPicker(null)
@@ -775,6 +833,191 @@ function App() {
     if (hours < 24) return `${hours}h ago`
     return `${days}d ago`
   }
+
+  // Load comments for a post
+  const loadComments = useCallback(async (postId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('comments')
+        .select('*')
+        .eq('post_id', postId)
+        .order('created_at', { ascending: true })
+
+      if (error) throw error
+
+      if (data) {
+        setComments(prev => ({ ...prev, [postId]: data }))
+        
+        // Update comment-to-post mapping using ref
+        data.forEach(comment => {
+          commentPostMapRef.current[comment.id] = postId
+        })
+      }
+    } catch (error) {
+      console.error('Error loading comments:', error)
+    }
+  }, [])
+
+  // Add a comment (callback for CommentInput)
+  const handleAddComment = useCallback(async (postId: string, content: string) => {
+    if (!userProfile) return
+
+    const commentId = uuidv4()
+    const comment: Omit<Comment, 'created_at' | 'updated_at'> = {
+      id: commentId,
+      post_id: postId,
+      user_id: userId,
+      user_name: userProfile.name,
+      user_avatar: userProfile.avatar || null,
+      content
+    }
+
+    try {
+      const { error } = await supabase
+        .from('comments')
+        .insert([comment])
+
+      if (error) throw error
+
+      // Update comment-to-post mapping using ref
+      commentPostMapRef.current[commentId] = postId
+
+      // Reload comments
+      loadComments(postId)
+
+      // Update post comment count optimistically
+      setPosts(prev => prev.map(p =>
+        p.id === postId
+          ? { ...p, comment_count: (p.comment_count || 0) + 1 }
+          : p
+      ))
+    } catch (error) {
+      console.error('Error adding comment:', error)
+      alert('Failed to add comment. Please try again.')
+    }
+  }, [userProfile, userId, loadComments])
+
+  // Delete a comment
+  // Delete a comment
+  const deleteComment = async (commentId: string, postId: string) => {
+    try {
+      // Optimistically remove from UI first
+      setComments(prev => ({
+        ...prev,
+        [postId]: (prev[postId] || []).filter(c => c.id !== commentId)
+      }))
+
+      // Update post comment count optimistically
+      setPosts(prev => prev.map(p =>
+        p.id === postId
+          ? { ...p, comment_count: Math.max((p.comment_count || 0) - 1, 0) }
+          : p
+      ))
+
+      const { error } = await supabase
+        .from('comments')
+        .delete()
+        .eq('id', commentId)
+
+      if (error) throw error
+
+      // Reload to sync with database
+      loadComments(postId)
+    } catch (error) {
+      console.error('Error deleting comment:', error)
+      alert('Failed to delete comment. Please try again.')
+      // Reload on error to revert optimistic update
+      loadComments(postId)
+    }
+  }
+
+  // Toggle comments section
+  const toggleComments = (postId: string) => {
+    if (showComments === postId) {
+      setShowComments(null)
+    } else {
+      setShowComments(postId)
+      if (!comments[postId]) {
+        loadComments(postId)
+      }
+    }
+  }
+
+  // Subscribe to realtime comments updates for ALL posts (only once)
+  useEffect(() => {
+    // Subscribe to ALL comment changes (not filtered by post)
+    const channel = supabase
+      .channel('all_comments', {
+        config: {
+          broadcast: { self: true }
+        }
+      })
+      .on('postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'comments'
+        },
+        (payload) => {
+          let postId: string | null = null
+          let commentId: string | null = null
+          
+          // Get post_id and comment_id
+          if (payload.new && 'post_id' in payload.new) {
+            postId = (payload.new as any).post_id
+            commentId = (payload.new as any).id
+            
+            // Update mapping for new comments using ref
+            if (commentId && postId) {
+              commentPostMapRef.current[commentId] = postId
+            }
+          } else if (payload.old && 'id' in payload.old) {
+            // For DELETE, get post_id from our mapping
+            commentId = (payload.old as any).id
+            if (commentId) {
+              postId = commentPostMapRef.current[commentId] || null
+            }
+          }
+          
+          if (!postId) return
+          
+          // Reload comments for this post
+          loadComments(postId)
+          
+          // Update comment count
+          if (payload.eventType === 'INSERT') {
+            setPosts(prev => prev.map(p =>
+              p.id === postId
+                ? { ...p, comment_count: (p.comment_count || 0) + 1 }
+                : p
+            ))
+          } else if (payload.eventType === 'DELETE') {
+            setPosts(prev => prev.map(p =>
+              p.id === postId
+                ? { ...p, comment_count: Math.max((p.comment_count || 0) - 1, 0) }
+                : p
+            ))
+            
+            // Clean up mapping using ref
+            if (commentId) {
+              delete commentPostMapRef.current[commentId]
+            }
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [loadComments]) // Only depends on loadComments (stable) // Now depends on stable loadComments
+
+  // Load comments when opening comment section
+  useEffect(() => {
+    if (showComments) {
+      loadComments(showComments)
+    }
+  }, [showComments, loadComments])
 
   return (
     <>
@@ -1328,7 +1571,90 @@ function App() {
                         </svg>
                         <span>{expandedPost === post.id ? 'Collapse' : 'Expand'}</span>
                       </button>
+
+                      <button
+                        onClick={() => toggleComments(post.id)}
+                        className={`group flex items-center space-x-2 px-3 py-2 rounded-lg transition-all text-sm font-medium ${
+                          showComments === post.id
+                            ? theme === 'dark'
+                              ? 'bg-blue-500/10 text-blue-400'
+                              : 'bg-blue-50 text-blue-600'
+                            : theme === 'dark'
+                            ? 'text-gray-400 hover:bg-[#21262d]'
+                            : 'text-gray-600 hover:bg-gray-100'
+                        }`}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                        </svg>
+                        <span>Comment</span>
+                        <span className={`text-xs ${theme === 'dark' ? 'text-gray-500' : 'text-gray-500'}`}>
+                          ({(post.comment_count || 0).toLocaleString()})
+                        </span>
+                      </button>
                     </div>
+
+                    {/* Comments Section */}
+                    {showComments === post.id && (
+                      <div className={`mt-4 pt-4 border-t ${theme === 'dark' ? 'border-[#30363d]' : 'border-gray-200'}`}>
+                        {/* Comment Input */}
+                        <CommentInput
+                          postId={post.id}
+                          userProfile={userProfile}
+                          theme={theme}
+                          onSubmit={handleAddComment}
+                        />
+
+                        {/* Comments List */}
+                        <div className="space-y-3">
+                          {comments[post.id]?.map((comment) => (
+                            <div key={comment.id} className={`flex items-start space-x-3 p-3 rounded-lg ${
+                              theme === 'dark' ? 'bg-[#0d1117]' : 'bg-gray-50'
+                            }`}>
+                              {comment.user_avatar ? (
+                                <img 
+                                  src={comment.user_avatar} 
+                                  alt={comment.user_name}
+                                  className="w-8 h-8 rounded-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center text-white font-bold text-sm">
+                                  {comment.user_name.charAt(0).toUpperCase()}
+                                </div>
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <span className={`font-semibold text-sm ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+                                      {comment.user_name}
+                                    </span>
+                                    <span className={`text-xs ml-2 ${theme === 'dark' ? 'text-gray-500' : 'text-gray-600'}`}>
+                                      {formatTimestamp(new Date(comment.created_at).getTime())}
+                                    </span>
+                                  </div>
+                                  {(comment.user_id === userId || userProfile?.isDev) && (
+                                    <button
+                                      onClick={() => deleteComment(comment.id, post.id)}
+                                      className={`text-xs ${theme === 'dark' ? 'text-gray-500 hover:text-red-400' : 'text-gray-400 hover:text-red-600'} transition-colors`}
+                                    >
+                                      Delete
+                                    </button>
+                                  )}
+                                </div>
+                                <p className={`text-sm mt-1 whitespace-pre-wrap ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
+                                  {comment.content}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                          {comments[post.id]?.length === 0 && (
+                            <p className={`text-center text-sm py-4 ${theme === 'dark' ? 'text-gray-500' : 'text-gray-600'}`}>
+                              No comments yet. Be the first to comment!
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </article>
               )
