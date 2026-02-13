@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Editor from '@monaco-editor/react'
 import { v4 as uuidv4 } from 'uuid'
 import { supabase, type CodePost, type ReactionType, type Reactions } from './lib/supabase'
@@ -110,16 +110,72 @@ function App() {
     return id
   })
   const [pendingUpdates, setPendingUpdates] = useState<Set<string>>(new Set())
+  const [userAvatars, setUserAvatars] = useState<Record<string, { name: string; avatar: string }>>({})
 
   useEffect(() => {
     // Check if user has profile
     const savedProfile = localStorage.getItem('userProfile')
     if (savedProfile) {
-      setUserProfile(JSON.parse(savedProfile))
+      const profile = JSON.parse(savedProfile)
+      setUserProfile(profile)
+      
+      // Sync to database if not exists
+      syncUserToDatabase(profile)
     } else {
       setShowOnboarding(true)
     }
   }, [])
+
+  // Sync user profile to database
+  const syncUserToDatabase = async (profile: { name: string; avatar: string; isDev: boolean }) => {
+    try {
+      // Check if user exists in database
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', userId)
+        .single()
+
+      // If user doesn't exist, create it
+      if (!existingUser) {
+        const { error } = await supabase
+          .from('users')
+          .insert({
+            id: userId,
+            name: profile.name,
+            avatar: profile.avatar,
+            is_dev: profile.isDev
+          })
+
+        if (error) throw error
+        console.log('✅ User profile synced to database')
+      }
+    } catch (error) {
+      console.error('Error syncing user to database:', error)
+    }
+  }
+
+  // Load user avatars from database
+  const loadUserAvatars = async (authorIds: string[]) => {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('id, name, avatar')
+        .in('id', authorIds)
+
+      if (error) throw error
+
+      if (data) {
+        const avatarMap: Record<string, { name: string; avatar: string }> = {}
+        data.forEach(user => {
+          avatarMap[user.id] = { name: user.name, avatar: user.avatar || '' }
+        })
+        setUserAvatars(prev => ({ ...prev, ...avatarMap }))
+      }
+    } catch (error) {
+      console.error('Error loading user avatars:', error)
+    }
+  }
 
   useEffect(() => {
     // Save theme to localStorage whenever it changes
@@ -169,10 +225,10 @@ function App() {
     if (userProfile) {
       loadPosts()
       
-      // Fallback polling every 1 second
+      // Fallback polling every 5 seconds (reduced from 1 second)
       const pollingInterval = setInterval(() => {
         loadPosts()
-      }, 1000)
+      }, 5000)
       
       // Subscribe to realtime changes
       const channel = supabase
@@ -196,7 +252,7 @@ function App() {
     }
   }, [userProfile])
 
-  const loadPosts = async () => {
+  const loadPosts = useCallback(async () => {
     try {
       const { data, error } = await supabase
         .from('code_posts')
@@ -206,7 +262,19 @@ function App() {
       if (error) throw error
 
       if (data) {
+        // Load avatars for all post authors
+        const authorIds = [...new Set(data.map(post => post.author_id))]
+        loadUserAvatars(authorIds)
+
         setPosts(prev => {
+          // Check if data actually changed to prevent unnecessary re-renders
+          const hasChanges = JSON.stringify(prev.map(p => ({ id: p.id, timestamp: p.timestamp }))) !== 
+                            JSON.stringify(data.map(p => ({ id: p.id, timestamp: p.timestamp })))
+          
+          if (!hasChanges && prev.length === data.length) {
+            return prev // No changes, return same reference
+          }
+
           // Don't overwrite posts that have pending updates
           return data.map(newPost => {
             if (pendingUpdates.has(newPost.id)) {
@@ -223,9 +291,9 @@ function App() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [pendingUpdates])
 
-  const completeOnboarding = () => {
+  const completeOnboarding = async () => {
     if (!onboardingData.name.trim()) {
       alert('Please enter your name')
       return
@@ -243,12 +311,29 @@ function App() {
       isDev: false
     }
 
-    localStorage.setItem('userProfile', JSON.stringify(profile))
-    setUserProfile(profile)
-    setShowOnboarding(false)
+    try {
+      // Save to database
+      const { error } = await supabase
+        .from('users')
+        .upsert({
+          id: userId,
+          name: profile.name,
+          avatar: profile.avatar,
+          is_dev: profile.isDev
+        })
+
+      if (error) throw error
+
+      localStorage.setItem('userProfile', JSON.stringify(profile))
+      setUserProfile(profile)
+      setShowOnboarding(false)
+    } catch (error) {
+      console.error('Error saving user profile:', error)
+      alert('Failed to save profile. Please try again.')
+    }
   }
 
-  const verifyPin = () => {
+  const verifyPin = async () => {
     const correctPin = '2548' // เปลี่ยน PIN ตรงนี้
     
     if (pinInput === correctPin) {
@@ -258,11 +343,28 @@ function App() {
         isDev: true
       }
 
-      localStorage.setItem('userProfile', JSON.stringify(profile))
-      setUserProfile(profile)
-      setShowOnboarding(false)
-      setShowPinModal(false)
-      setPinInput('')
+      try {
+        // Save to database
+        const { error } = await supabase
+          .from('users')
+          .upsert({
+            id: userId,
+            name: profile.name,
+            avatar: profile.avatar,
+            is_dev: profile.isDev
+          })
+
+        if (error) throw error
+
+        localStorage.setItem('userProfile', JSON.stringify(profile))
+        setUserProfile(profile)
+        setShowOnboarding(false)
+        setShowPinModal(false)
+        setPinInput('')
+      } catch (error) {
+        console.error('Error saving user profile:', error)
+        alert('Failed to save profile. Please try again.')
+      }
     } else {
       alert('Incorrect PIN')
       setPinInput('')
@@ -279,7 +381,7 @@ function App() {
     }
   }
 
-  const saveSettings = () => {
+  const saveSettings = async () => {
     if (!settingsData.name.trim()) {
       alert('Please enter your name')
       return
@@ -291,9 +393,26 @@ function App() {
       avatar: settingsData.avatar
     }
 
-    localStorage.setItem('userProfile', JSON.stringify(updatedProfile))
-    setUserProfile(updatedProfile)
-    setShowSettingsModal(false)
+    try {
+      // Update in database
+      const { error } = await supabase
+        .from('users')
+        .update({
+          name: updatedProfile.name,
+          avatar: updatedProfile.avatar,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', userId)
+
+      if (error) throw error
+
+      localStorage.setItem('userProfile', JSON.stringify(updatedProfile))
+      setUserProfile(updatedProfile)
+      setShowSettingsModal(false)
+    } catch (error) {
+      console.error('Error updating user profile:', error)
+      alert('Failed to update profile. Please try again.')
+    }
   }
 
   const handleSettingsAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -943,9 +1062,9 @@ function App() {
                     <div className="flex items-start justify-between mb-5">
                       <div className="flex items-center space-x-4">
                         <div className="relative">
-                          {userProfile?.name === post.author && userProfile?.avatar ? (
+                          {userAvatars[post.author_id]?.avatar ? (
                             <img 
-                              src={userProfile.avatar} 
+                              src={userAvatars[post.author_id].avatar} 
                               alt={post.author}
                               className="w-12 h-12 rounded-full object-cover shadow-lg border-2 border-blue-500"
                             />
@@ -1013,6 +1132,11 @@ function App() {
                         overviewRulerBorder: false,
                         hideCursorInOverviewRuler: true,
                         smoothScrolling: true,
+                        scrollbar: {
+                          vertical: 'auto',
+                          horizontal: 'auto',
+                          alwaysConsumeMouseWheel: false, // Allow page scroll when mouse is over editor
+                        },
                       }}
                       beforeMount={(monaco) => {
                         // Disable all language validation
@@ -1321,6 +1445,7 @@ function App() {
                           horizontal: 'auto',
                           verticalScrollbarSize: 8,
                           horizontalScrollbarSize: 8,
+                          alwaysConsumeMouseWheel: false, // Allow page scroll when mouse is over editor
                         },
                       }}
                       beforeMount={(monaco) => {
