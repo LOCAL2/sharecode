@@ -138,6 +138,8 @@ function App() {
     return (savedTheme as 'light' | 'dark') || 'dark'
   })
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [editingPost, setEditingPost] = useState<CodePost | null>(null)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [showPinModal, setShowPinModal] = useState(false)
   const [pinInput, setPinInput] = useState('')
@@ -150,6 +152,10 @@ function App() {
     code: '',
     title: '',
     author: ''
+  })
+  const [editPost, setEditPost] = useState({
+    code: '',
+    title: ''
   })
   const [expandedPost, setExpandedPost] = useState<string | null>(null)
   const [deleteModalPost, setDeleteModalPost] = useState<string | null>(null)
@@ -554,6 +560,51 @@ function App() {
     } catch (error) {
       console.error('Error creating post:', error)
       alert('Failed to create post. Please try again.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const openEditModal = (post: CodePost) => {
+    setEditingPost(post)
+    setEditPost({
+      code: post.code,
+      title: post.title
+    })
+    setShowEditModal(true)
+  }
+
+  const updatePost = async () => {
+    if (!editingPost || !editPost.code.trim()) {
+      return
+    }
+
+    setUploading(true)
+
+    try {
+      const { error } = await supabase
+        .from('code_posts')
+        .update({
+          code: editPost.code,
+          title: editPost.title.trim() || 'Untitled'
+        })
+        .eq('id', editingPost.id)
+
+      if (error) throw error
+
+      // Update local state
+      setPosts(prev => prev.map(p =>
+        p.id === editingPost.id
+          ? { ...p, code: editPost.code, title: editPost.title.trim() || 'Untitled' }
+          : p
+      ))
+
+      setShowEditModal(false)
+      setEditingPost(null)
+      setEditPost({ code: '', title: '' })
+    } catch (error) {
+      console.error('Error updating post:', error)
+      alert('Failed to update post. Please try again.')
     } finally {
       setUploading(false)
     }
@@ -1327,18 +1378,32 @@ function App() {
                         </div>
                       </div>
                       {(post.author_id === userId || userProfile?.isDev) && (
-                        <button
-                          onClick={() => setDeleteModalPost(post.id)}
-                          className={`p-2 rounded-lg transition-all ${
-                            theme === 'dark' 
-                              ? 'text-gray-500 hover:text-red-400 hover:bg-red-400/10' 
-                              : 'text-gray-400 hover:text-red-600 hover:bg-red-50'
-                          }`}
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => openEditModal(post)}
+                            className={`p-2 rounded-lg transition-all ${
+                              theme === 'dark' 
+                                ? 'text-gray-500 hover:text-blue-400 hover:bg-blue-400/10' 
+                                : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
+                            }`}
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => setDeleteModalPost(post.id)}
+                            className={`p-2 rounded-lg transition-all ${
+                              theme === 'dark' 
+                                ? 'text-gray-500 hover:text-red-400 hover:bg-red-400/10' 
+                                : 'text-gray-400 hover:text-red-600 hover:bg-red-50'
+                            }`}
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
                       )}
                     </div>
                     
@@ -1833,6 +1898,173 @@ function App() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
                         <span>Publish Post</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Modal */}
+      {showEditModal && editingPost && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className={`${
+            theme === 'dark' ? 'bg-[#0d1117] border-[#21262d]' : 'bg-white border-gray-100'
+          } rounded-2xl border shadow-2xl max-w-5xl w-full max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-300 overflow-hidden`}>
+            {/* Header */}
+            <div className={`px-6 py-5 border-b ${theme === 'dark' ? 'border-[#21262d]' : 'border-gray-100'}`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center shadow-lg">
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h2 className={`text-xl font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+                      Edit Post
+                    </h2>
+                    <p className={`text-xs ${theme === 'dark' ? 'text-gray-500' : 'text-gray-600'}`}>
+                      Update your code snippet
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowEditModal(false)
+                    setEditingPost(null)
+                  }}
+                  className={`p-2 rounded-lg transition-all ${
+                    theme === 'dark' ? 'text-gray-500 hover:text-white hover:bg-[#21262d]' : 'text-gray-400 hover:text-gray-900 hover:bg-gray-100'
+                  }`}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className={`flex-1 overflow-y-auto px-6 py-5 ${theme === 'dark' ? 'dark-scrollbar' : 'light-scrollbar'}`}>
+              <div className="space-y-5">
+                {/* Title Input */}
+                <div>
+                  <label className={`flex items-center space-x-2 text-xs font-semibold mb-2 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-700'}`}>
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                    </svg>
+                    <span>TITLE</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editPost.title}
+                    onChange={(e) => setEditPost({ ...editPost, title: e.target.value })}
+                    placeholder="Give your code a descriptive title..."
+                    className={`w-full px-4 py-3 rounded-lg border ${
+                      theme === 'dark'
+                        ? 'bg-[#161b22] border-[#21262d] text-white placeholder-gray-600 focus:border-orange-500'
+                        : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400 focus:border-orange-500'
+                    } focus:ring-2 focus:ring-orange-500/20 transition-all outline-none`}
+                  />
+                </div>
+
+                {/* Code Editor */}
+                <div>
+                  <label className={`flex items-center space-x-2 text-xs font-semibold mb-2 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-700'}`}>
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                    </svg>
+                    <span>CODE</span>
+                    <span className="text-red-500">*</span>
+                  </label>
+                  <div className={`border rounded-lg overflow-hidden ${
+                    theme === 'dark' ? 'border-[#21262d]' : 'border-gray-200'
+                  }`} style={{ height: '450px' }}>
+                    <Editor
+                      height="100%"
+                      defaultLanguage="javascript"
+                      value={editPost.code}
+                      onChange={(value) => setEditPost({ ...editPost, code: value || '' })}
+                      theme={theme === 'dark' ? 'vs-dark' : 'light'}
+                      options={{
+                        minimap: { enabled: false },
+                        fontSize: 14,
+                        lineNumbers: 'on',
+                        scrollBeyondLastLine: false,
+                        automaticLayout: true,
+                        tabSize: 2,
+                        wordWrap: 'on',
+                        formatOnPaste: true,
+                        formatOnType: true,
+                        padding: { top: 16, bottom: 16 },
+                        smoothScrolling: true,
+                        cursorBlinking: 'smooth',
+                        cursorSmoothCaretAnimation: 'on',
+                        scrollbar: {
+                          vertical: 'auto',
+                          horizontal: 'auto',
+                          verticalScrollbarSize: 8,
+                          horizontalScrollbarSize: 8,
+                          alwaysConsumeMouseWheel: false,
+                        },
+                      }}
+                      beforeMount={(monaco) => {
+                        monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+                          noSemanticValidation: true,
+                          noSyntaxValidation: true,
+                        })
+                        monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+                          noSemanticValidation: true,
+                          noSyntaxValidation: true,
+                        })
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className={`px-6 py-4 border-t ${theme === 'dark' ? 'border-[#21262d] bg-[#0d1117]' : 'border-gray-100 bg-gray-50'}`}>
+              <div className="flex items-center justify-end">
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() => {
+                      setShowEditModal(false)
+                      setEditingPost(null)
+                    }}
+                    disabled={uploading}
+                    className={`px-5 py-2.5 rounded-lg transition-all font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                      theme === 'dark'
+                        ? 'bg-[#21262d] hover:bg-[#30363d] text-gray-300'
+                        : 'bg-white hover:bg-gray-100 text-gray-700 border border-gray-200'
+                    }`}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={updatePost}
+                    disabled={!editPost.code.trim() || uploading}
+                    className="px-6 py-2.5 bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed text-white rounded-lg transition-all font-semibold text-sm shadow-lg hover:shadow-xl hover:shadow-orange-500/20 hover:scale-[1.02] disabled:hover:scale-100 flex items-center justify-center space-x-2 min-w-[130px]"
+                  >
+                    {uploading ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span>Updating...</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span>Update Post</span>
                       </>
                     )}
                   </button>
