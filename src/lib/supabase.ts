@@ -33,6 +33,7 @@ export interface CodePost {
   reactions?: Reactions
   comment_count?: number
   created_at?: string
+  edited_at?: string
 }
 
 export interface Comment {
@@ -44,4 +45,14 @@ export interface Comment {
   content: string
   created_at: string
   updated_at: string
+}
+
+export interface PostEditHistory {
+  id: string
+  post_id: string
+  old_code: string
+  new_code: string
+  old_title: string
+  new_title: string
+  created_at: string
 }

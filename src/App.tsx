@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import Editor from '@monaco-editor/react'
+import Editor, { DiffEditor } from '@monaco-editor/react'
 import { v4 as uuidv4 } from 'uuid'
-import { supabase, type CodePost, type ReactionType, type Reactions, type Comment } from './lib/supabase'
+import { supabase, type CodePost, type ReactionType, type Reactions, type Comment, type PostEditHistory } from './lib/supabase'
 
 const reactionEmojis: Record<ReactionType, string> = {
   like: '👍',
@@ -140,6 +140,9 @@ function App() {
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [editingPost, setEditingPost] = useState<CodePost | null>(null)
+  const [showHistoryModal, setShowHistoryModal] = useState<string | null>(null)
+  const [postHistory, setPostHistory] = useState<PostEditHistory[]>([])
+  const [loadingHistory, setLoadingHistory] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [showPinModal, setShowPinModal] = useState(false)
   const [pinInput, setPinInput] = useState('')
@@ -337,9 +340,7 @@ function App() {
         loadUserAvatars(authorIds)
 
         setPosts(prev => {
-          // Check if data actually changed to prevent unnecessary re-renders
-          const hasChanges = JSON.stringify(prev.map(p => ({ id: p.id, timestamp: p.timestamp }))) !== 
-                            JSON.stringify(data.map(p => ({ id: p.id, timestamp: p.timestamp })))
+          const hasChanges = JSON.stringify(prev) !== JSON.stringify(data)
           
           if (!hasChanges && prev.length === data.length) {
             return prev // No changes, return same reference
@@ -562,6 +563,26 @@ function App() {
       alert('Failed to create post. Please try again.')
     } finally {
       setUploading(false)
+    }
+  }
+
+  const viewHistory = async (postId: string) => {
+    setShowHistoryModal(postId)
+    setLoadingHistory(true)
+    try {
+      const { data, error } = await supabase
+        .from('post_edits')
+        .select('*')
+        .eq('post_id', postId)
+        .order('created_at', { ascending: false })
+      
+      if (error) throw error
+      if (data) setPostHistory(data)
+    } catch (error) {
+      console.error('Error fetching history:', error)
+      alert('Failed to load history.')
+    } finally {
+      setLoadingHistory(false)
     }
   }
 
@@ -1372,8 +1393,16 @@ function App() {
                           <h3 className={`font-semibold text-lg ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
                             {post.author}
                           </h3>
-                          <p className={`text-sm ${theme === 'dark' ? 'text-gray-500' : 'text-gray-600'}`}>
-                            {formatTimestamp(post.timestamp)}
+                          <p className={`text-sm flex items-center space-x-2 ${theme === 'dark' ? 'text-gray-500' : 'text-gray-600'}`}>
+                            <span>{formatTimestamp(post.timestamp)}</span>
+                            {post.edited_at && (
+                              <button 
+                                onClick={() => viewHistory(post.id)}
+                                className={`text-xs hover:underline ${theme === 'dark' ? 'text-gray-400 hover:text-gray-300' : 'text-gray-500 hover:text-gray-700'}`}
+                              >
+                                (Edited)
+                              </button>
+                            )}
                           </p>
                         </div>
                       </div>
@@ -2229,6 +2258,71 @@ function App() {
                   Cancel
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* History Modal */}
+      {showHistoryModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[70] p-4 animate-in fade-in duration-200">
+          <div className={`${
+            theme === 'dark' ? 'bg-[#0d1117] border-[#21262d]' : 'bg-white border-gray-100'
+          } rounded-2xl border shadow-2xl max-w-6xl w-full max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-300 overflow-hidden`}>
+            {/* Header */}
+            <div className={`px-6 py-5 border-b flex justify-between items-center ${theme === 'dark' ? 'border-[#21262d]' : 'border-gray-100'}`}>
+              <div>
+                <h2 className={`text-xl font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>Edit History</h2>
+                <p className={`text-sm ${theme === 'dark' ? 'text-gray-500' : 'text-gray-600'}`}>View previous versions of this post</p>
+              </div>
+              <button onClick={() => setShowHistoryModal(null)} className={`p-2 rounded-lg transition-all ${theme === 'dark' ? 'text-gray-500 hover:text-white hover:bg-[#21262d]' : 'text-gray-400 hover:text-gray-900 hover:bg-gray-100'}`}>
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            {/* Content */}
+            <div className={`flex-1 overflow-y-auto p-6 ${theme === 'dark' ? 'dark-scrollbar' : 'light-scrollbar'}`}>
+              {loadingHistory ? (
+                <div className="flex justify-center items-center h-40">
+                  <div className="w-8 h-8 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
+                </div>
+              ) : postHistory.length === 0 ? (
+                <div className={`text-center py-10 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+                  No edit history available.
+                </div>
+              ) : (
+                <div className="space-y-8">
+                  {postHistory.map((history, idx) => (
+                    <div key={history.id} className={`border rounded-xl overflow-hidden ${theme === 'dark' ? 'border-[#30363d]' : 'border-gray-200'}`}>
+                      <div className={`px-4 py-3 border-b flex justify-between items-center ${theme === 'dark' ? 'bg-[#161b22] border-[#30363d]' : 'bg-gray-50 border-gray-200'}`}>
+                        <div className={`font-semibold ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
+                          Version {postHistory.length - idx} 
+                          {history.old_title !== history.new_title && <span className="ml-4 text-xs font-normal">Title changed: <del className="text-red-400 opacity-70">{history.old_title}</del> → <span className="text-green-500">{history.new_title}</span></span>}
+                        </div>
+                        <div className={`text-sm ${theme === 'dark' ? 'text-gray-500' : 'text-gray-500'}`}>
+                          {new Date(history.created_at).toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="h-[300px]">
+                        <DiffEditor
+                          original={history.old_code}
+                          modified={history.new_code}
+                          language="plaintext"
+                          theme={theme === 'dark' ? 'vs-dark' : 'light'}
+                          options={{
+                            readOnly: true,
+                            minimap: { enabled: false },
+                            renderSideBySide: true,
+                            scrollBeyondLastLine: false,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
